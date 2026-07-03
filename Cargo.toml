@@ -1,12 +1,12 @@
 [package]
-name = "bv-vacation-api"
+name = "daysoff-api"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
-description = "Friction-free vacation day tracker API"
+description = "Daysoff: self-hosted vacation day tracker API"
 
 [lib]
-name = "bv_vacation_api"
+name = "daysoff_api"
 path = "src/lib.rs"
 
 [[bin]]

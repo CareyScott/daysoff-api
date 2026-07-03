@@ -45,6 +45,10 @@ fn cors() -> CorsLayer {
 pub fn app() -> Router {
     Router::new()
         .route("/api/health", get(health))
+        .route(
+            "/api/settings",
+            get(routes::settings::get).put(routes::settings::update),
+        )
         .route("/api/auth/login", post(routes::auth::login))
         .route("/api/me", get(routes::overview::me))
         .route("/api/me/password", post(routes::auth::change_password))

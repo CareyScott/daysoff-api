@@ -6,6 +6,6 @@ use vercel_runtime::axum::VercelLayer;
 async fn main() -> Result<(), Error> {
     let app = ServiceBuilder::new()
         .layer(VercelLayer::new())
-        .service(bv_vacation_api::app());
+        .service(daysoff_api::app());
     vercel_runtime::run(app).await
 }

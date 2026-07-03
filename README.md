@@ -1,45 +1,58 @@
-# bv-vacation-api
+# daysoff-api
 
-Backend for BV Vacation, a friction-free vacation day tracker for small teams. Rust (Axum) running as a single serverless function on Vercel, backed by Neon Postgres.
+Backend for **Daysoff**, an open-source, self-hosted vacation day tracker for small teams. Rust (Axum) running as a single serverless function on Vercel, backed by your own Neon Postgres database. Free-tier friendly: a small team runs at $0/month.
 
-The companion frontend (React web + Tauri desktop) lives at [bv-vacation-app](https://github.com/CareyScott/bv-vacation-app).
+The companion frontend (React web + Tauri desktop) lives at [daysoff-app](https://github.com/CareyScott/daysoff-app).
 
-## How it works
+## Features
 
-- One Axum router served through the official [Vercel Rust runtime](https://vercel.com/docs/functions/runtimes/rust) (`vercel_runtime` with the `axum` feature). `vercel.json` rewrites `/api/(.*)` to the single function at `api/main.rs`.
-- Postgres via sqlx (runtime queries, no macros). A shared connection pool is reused across warm invocations.
-- Auth: email + password (Argon2id), 30-day JWT bearer tokens. Works identically from the browser and the Tauri desktop app.
-- Absences are date ranges with a DB-level overlap exclusion constraint. Business days (Mon-Fri) are counted at booking time; vacation draws from a per-user yearly allowance, sick days are tracked but unlimited.
-- Bootstrap: when the `users` table is empty, an admin account is created from the `ADMIN_EMAIL` / `ADMIN_PASSWORD` env vars.
+- Email + password accounts with admin and member roles
+- Direct booking, no approval workflow: pick a date range, done
+- Vacation draws from a per-user yearly allowance; sick days tracked separately (unlimited)
+- Business-day counting (weekends excluded automatically), DB-level overlap prevention
+- White-label: company name and accent color are stored in your database and editable in-app by admins
+- Your data stays in your own database
 
-## Local development
+## Deploy your own
 
-Requirements: Rust, Postgres (a Docker container works), [sqlx-cli](https://crates.io/crates/sqlx-cli).
+Requirements: a GitHub account, a free Vercel account, Rust locally for migrations.
 
-```sh
-cp .env.example .env         # fill in values
-sqlx migrate run             # uses DATABASE_URL from .env
-cargo run --bin local        # serves http://127.0.0.1:3000
-curl localhost:3000/api/health
-```
+1. Fork/clone this repo, then create a Vercel project from it (framework: Other).
+2. Add Neon Postgres: Vercel dashboard → your project → Storage → Create Database → Neon (free tier). This injects `DATABASE_URL` and `DATABASE_URL_UNPOOLED`.
+3. Set the remaining environment variables (see below).
+4. Run migrations from your machine:
+   ```sh
+   cargo install sqlx-cli --no-default-features --features rustls,postgres
+   DATABASE_URL=<your DATABASE_URL_UNPOOLED> sqlx migrate run
+   ```
+5. Deploy (`vercel deploy --prod` or git push with the GitHub integration).
+6. First request bootstraps the admin account from `ADMIN_EMAIL` / `ADMIN_PASSWORD`. Log in, change the password, set your company name and color in Settings, invite your team.
 
 ## Environment variables
 
 | Var | Purpose |
 |---|---|
-| `DATABASE_URL` | Postgres connection string (use the pooled Neon URL in production) |
+| `DATABASE_URL` | Postgres connection string (pooled Neon URL; injected by the integration) |
 | `JWT_SECRET` | HS256 signing secret (`openssl rand -hex 32`) |
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD` | Initial admin account, created only when no users exist |
-| `ALLOWED_ORIGINS` | Extra comma-separated CORS origins (the deployed web app URL) |
+| `ADMIN_NAME` | Display name for the initial admin (optional, default "Admin") |
+| `ALLOWED_ORIGINS` | Extra comma-separated CORS origins (your deployed web app URL) |
 
-## Deployment
-
-Deployed to Vercel (Hobby plan) with Neon Postgres from the Vercel Marketplace. Migrations run manually against the unpooled connection string:
+## Local development
 
 ```sh
-DATABASE_URL=$DATABASE_URL_UNPOOLED sqlx migrate run
-vercel deploy --prod
+cp .env.example .env         # fill in values; a local Postgres or Docker container works
+sqlx migrate run
+cargo run --bin local        # serves http://127.0.0.1:3000
+curl localhost:3000/api/health
 ```
+
+## How it works
+
+- One Axum router served through the official [Vercel Rust runtime](https://vercel.com/docs/functions/runtimes/rust) (`vercel_runtime` with the `axum` feature). `vercel.json` rewrites `/api/(.*)` to the single function at `api/main.rs`.
+- Postgres via sqlx (runtime queries, no macros). A shared connection pool is reused across warm invocations.
+- Auth: Argon2id password hashing, 30-day JWT bearer tokens. Works identically from the browser and the Tauri desktop app.
+- Absences are date ranges with a DB-level overlap exclusion constraint.
 
 ## API
 

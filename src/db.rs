@@ -41,6 +41,7 @@ async fn bootstrap_admin(pool: &PgPool) -> Result<(), ApiError> {
         return Ok(());
     };
 
+    let admin_name = std::env::var("ADMIN_NAME").unwrap_or_else(|_| "Admin".to_string());
     let hash = auth::hash_password(&password)?;
     let user_id: uuid::Uuid = sqlx::query_scalar(
         "INSERT INTO users (email, name, password_hash, role)
@@ -49,7 +50,7 @@ async fn bootstrap_admin(pool: &PgPool) -> Result<(), ApiError> {
          RETURNING id",
     )
     .bind(&email)
-    .bind("Scott")
+    .bind(&admin_name)
     .bind(&hash)
     .fetch_one(pool)
     .await?;

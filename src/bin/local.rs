@@ -4,8 +4,8 @@ async fn main() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:3000")
         .await
         .expect("bind 127.0.0.1:3000");
-    println!("bv-vacation-api listening on http://127.0.0.1:3000");
-    axum::serve(listener, bv_vacation_api::app())
+    println!("daysoff-api listening on http://127.0.0.1:3000");
+    axum::serve(listener, daysoff_api::app())
         .await
         .expect("server error");
 }
