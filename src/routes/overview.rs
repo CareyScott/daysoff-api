@@ -25,7 +25,7 @@ pub(crate) async fn taken_days(
 ) -> Result<(f64, f64, f64), ApiError> {
     let (vacation, pending, sick): (f64, f64, f64) = sqlx::query_as(
         "SELECT
-            COALESCE(SUM(business_days) FILTER (WHERE kind = 'vacation' AND status = 'approved'), 0)::float8,
+            COALESCE(SUM(business_days) FILTER (WHERE kind = 'vacation' AND status IN ('approved', 'cancel_pending')), 0)::float8,
             COALESCE(SUM(business_days) FILTER (WHERE kind = 'vacation' AND status = 'pending'), 0)::float8,
             COALESCE(SUM(business_days) FILTER (WHERE kind = 'sick' AND status <> 'denied'), 0)::float8
          FROM absences
@@ -123,7 +123,11 @@ pub async fn overview(_user: AuthUser, Query(q): Query<YearQuery>) -> Result<Jso
                 .unwrap_or(0);
             let vacation_taken: f64 = absences
                 .iter()
-                .filter(|a| a.user_id == u.id && a.kind == "vacation" && a.status == "approved")
+                .filter(|a| {
+                    a.user_id == u.id
+                        && a.kind == "vacation"
+                        && matches!(a.status.as_str(), "approved" | "cancel_pending")
+                })
                 .map(|a| a.business_days)
                 .sum();
             let vacation_pending: f64 = absences

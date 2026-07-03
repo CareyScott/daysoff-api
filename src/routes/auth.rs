@@ -36,6 +36,31 @@ pub async fn login(Json(body): Json<LoginBody>) -> Result<Json<Value>, ApiError>
 }
 
 #[derive(Deserialize)]
+pub struct UpdateMeBody {
+    pub name: String,
+}
+
+pub async fn update_me(
+    user: AuthUser,
+    Json(body): Json<UpdateMeBody>,
+) -> Result<Json<crate::models::PublicUser>, ApiError> {
+    let name = body.name.trim();
+    if name.is_empty() || name.len() > 80 {
+        return Err(ApiError::Unprocessable("name must be 1-80 characters".to_string()));
+    }
+    let pool = db::pool().await?;
+    let updated: crate::models::PublicUser = sqlx::query_as(
+        "UPDATE users SET name = $2 WHERE id = $1
+         RETURNING id, email, name, role, active, must_change_password",
+    )
+    .bind(user.id)
+    .bind(name)
+    .fetch_one(pool)
+    .await?;
+    Ok(Json(updated))
+}
+
+#[derive(Deserialize)]
 pub struct ChangePasswordBody {
     pub current_password: String,
     pub new_password: String,

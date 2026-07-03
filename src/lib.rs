@@ -50,7 +50,10 @@ pub fn app() -> Router {
             get(routes::settings::get).put(routes::settings::update),
         )
         .route("/api/auth/login", post(routes::auth::login))
-        .route("/api/me", get(routes::overview::me))
+        .route(
+            "/api/me",
+            get(routes::overview::me).patch(routes::auth::update_me),
+        )
         .route("/api/me/password", post(routes::auth::change_password))
         .route(
             "/api/absences",

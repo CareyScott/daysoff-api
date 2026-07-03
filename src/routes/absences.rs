@@ -1,6 +1,7 @@
 use axum::Json;
 use axum::extract::{Path, Query};
 use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
 use chrono::{Datelike, NaiveDate};
 use serde::Deserialize;
 use uuid::Uuid;
@@ -144,7 +145,10 @@ pub async fn create(
             sqlx::query_scalar("SELECT require_approval FROM settings WHERE id")
                 .fetch_one(pool)
                 .await?;
-        if require_approval {
+        // Backdated vacations ALWAYS need an admin, even when the workspace
+        // does not require approval in general.
+        let today = chrono::Utc::now().date_naive();
+        if require_approval || body.start_date < today {
             status = "pending";
         }
     }
@@ -180,18 +184,39 @@ pub async fn create(
     Ok((StatusCode::CREATED, Json(absence)))
 }
 
-pub async fn remove(user: AuthUser, Path(id): Path<Uuid>) -> Result<StatusCode, ApiError> {
+pub async fn remove(user: AuthUser, Path(id): Path<Uuid>) -> Result<Response, ApiError> {
     let pool = db::pool().await?;
-    let owner: Option<Uuid> = sqlx::query_scalar("SELECT user_id FROM absences WHERE id = $1")
-        .bind(id)
-        .fetch_optional(pool)
-        .await?;
+    let row: Option<(Uuid, String, String, NaiveDate)> = sqlx::query_as(
+        "SELECT user_id, kind, status, start_date FROM absences WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?;
 
-    let Some(owner) = owner else {
+    let Some((owner, kind, status, start_date)) = row else {
         return Err(ApiError::NotFound);
     };
     if owner != user.id && !user.is_admin() {
         return Err(ApiError::Forbidden);
+    }
+
+    // Members cannot silently remove a vacation that already started:
+    // it becomes a cancellation request an admin has to approve.
+    // (Their own still-pending requests and sick days delete directly.)
+    let today = chrono::Utc::now().date_naive();
+    if !user.is_admin()
+        && kind == "vacation"
+        && start_date < today
+        && matches!(status.as_str(), "approved" | "cancel_pending")
+    {
+        let absence: Absence = sqlx::query_as(&format!(
+            "UPDATE absences SET status = 'cancel_pending'
+             WHERE id = $1 RETURNING {ABSENCE_COLUMNS}"
+        ))
+        .bind(id)
+        .fetch_one(pool)
+        .await?;
+        return Ok((StatusCode::OK, Json(absence)).into_response());
     }
 
     sqlx::query("DELETE FROM absences WHERE id = $1")
@@ -199,12 +224,28 @@ pub async fn remove(user: AuthUser, Path(id): Path<Uuid>) -> Result<StatusCode, 
         .execute(pool)
         .await?;
 
-    Ok(StatusCode::NO_CONTENT)
+    Ok(StatusCode::NO_CONTENT.into_response())
 }
 
 pub async fn approve(user: AuthUser, Path(id): Path<Uuid>) -> Result<Json<Absence>, ApiError> {
     user.require_admin()?;
     let pool = db::pool().await?;
+
+    // Approving a cancellation request deletes the absence.
+    let current: Option<String> = sqlx::query_scalar("SELECT status FROM absences WHERE id = $1")
+        .bind(id)
+        .fetch_optional(pool)
+        .await?;
+    if current.as_deref() == Some("cancel_pending") {
+        let absence: Absence = sqlx::query_as(&format!(
+            "DELETE FROM absences WHERE id = $1 RETURNING {ABSENCE_COLUMNS}"
+        ))
+        .bind(id)
+        .fetch_one(pool)
+        .await?;
+        return Ok(Json(absence));
+    }
+
     let absence: Option<Absence> = sqlx::query_as(&format!(
         "UPDATE absences SET status = 'approved', decision_reason = NULL
          WHERE id = $1 RETURNING {ABSENCE_COLUMNS}"
@@ -235,8 +276,13 @@ pub async fn deny(
     }
 
     let pool = db::pool().await?;
+
+    // Denying a cancellation request keeps the vacation booked (approved),
+    // with the reason recorded for the requester.
     let absence: Option<Absence> = sqlx::query_as(&format!(
-        "UPDATE absences SET status = 'denied', decision_reason = $2
+        "UPDATE absences SET
+            status = CASE WHEN status = 'cancel_pending' THEN 'approved' ELSE 'denied' END,
+            decision_reason = $2
          WHERE id = $1 RETURNING {ABSENCE_COLUMNS}"
     ))
     .bind(id)
