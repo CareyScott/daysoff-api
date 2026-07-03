@@ -16,15 +16,18 @@ pub struct YearQuery {
     pub year: Option<i32>,
 }
 
+/// (approved vacation days, pending vacation days, sick days) for a year.
+/// Denied requests count for nothing.
 pub(crate) async fn taken_days(
     pool: &PgPool,
     user_id: Uuid,
     year: i32,
-) -> Result<(i32, i32), ApiError> {
-    let (vacation, sick): (i32, i32) = sqlx::query_as(
+) -> Result<(f64, f64, f64), ApiError> {
+    let (vacation, pending, sick): (f64, f64, f64) = sqlx::query_as(
         "SELECT
-            COALESCE(SUM(business_days) FILTER (WHERE kind = 'vacation'), 0)::int,
-            COALESCE(SUM(business_days) FILTER (WHERE kind = 'sick'), 0)::int
+            COALESCE(SUM(business_days) FILTER (WHERE kind = 'vacation' AND status = 'approved'), 0)::float8,
+            COALESCE(SUM(business_days) FILTER (WHERE kind = 'vacation' AND status = 'pending'), 0)::float8,
+            COALESCE(SUM(business_days) FILTER (WHERE kind = 'sick' AND status <> 'denied'), 0)::float8
          FROM absences
          WHERE user_id = $1 AND date_part('year', start_date) = $2",
     )
@@ -32,7 +35,7 @@ pub(crate) async fn taken_days(
     .bind(f64::from(year))
     .fetch_one(pool)
     .await?;
-    Ok((vacation, sick))
+    Ok((vacation, pending, sick))
 }
 
 pub(crate) async fn allowance_days(
@@ -55,13 +58,14 @@ pub(crate) async fn summary_for(
     year: i32,
 ) -> Result<Summary, ApiError> {
     let allowance = allowance_days(pool, user_id, year).await?;
-    let (vacation_taken, sick_taken) = taken_days(pool, user_id, year).await?;
+    let (vacation_taken, vacation_pending, sick_taken) = taken_days(pool, user_id, year).await?;
     Ok(Summary {
         year,
         allowance,
         vacation_taken,
+        vacation_pending,
         sick_taken,
-        remaining: allowance - vacation_taken,
+        remaining: f64::from(allowance) - vacation_taken - vacation_pending,
     })
 }
 
@@ -92,7 +96,8 @@ pub async fn overview(_user: AuthUser, Query(q): Query<YearQuery>) -> Result<Jso
     .await?;
 
     let absences: Vec<Absence> = sqlx::query_as(
-        "SELECT a.id, a.user_id, a.kind, a.start_date, a.end_date, a.business_days
+        "SELECT a.id, a.user_id, a.kind, a.start_date, a.end_date, a.business_days,
+                a.status, a.day_part, a.note, a.decision_reason
          FROM absences a
          JOIN users u ON u.id = a.user_id
          WHERE u.active AND date_part('year', a.start_date) = $1
@@ -116,14 +121,19 @@ pub async fn overview(_user: AuthUser, Query(q): Query<YearQuery>) -> Result<Jso
                 .find(|(id, _)| *id == u.id)
                 .map(|(_, days)| *days)
                 .unwrap_or(0);
-            let vacation_taken: i32 = absences
+            let vacation_taken: f64 = absences
                 .iter()
-                .filter(|a| a.user_id == u.id && a.kind == "vacation")
+                .filter(|a| a.user_id == u.id && a.kind == "vacation" && a.status == "approved")
                 .map(|a| a.business_days)
                 .sum();
-            let sick_taken: i32 = absences
+            let vacation_pending: f64 = absences
                 .iter()
-                .filter(|a| a.user_id == u.id && a.kind == "sick")
+                .filter(|a| a.user_id == u.id && a.kind == "vacation" && a.status == "pending")
+                .map(|a| a.business_days)
+                .sum();
+            let sick_taken: f64 = absences
+                .iter()
+                .filter(|a| a.user_id == u.id && a.kind == "sick" && a.status != "denied")
                 .map(|a| a.business_days)
                 .sum();
             json!({
@@ -134,8 +144,9 @@ pub async fn overview(_user: AuthUser, Query(q): Query<YearQuery>) -> Result<Jso
                 "active": u.active,
                 "allowance": allowance,
                 "vacation_taken": vacation_taken,
+                "vacation_pending": vacation_pending,
                 "sick_taken": sick_taken,
-                "remaining": allowance - vacation_taken,
+                "remaining": f64::from(allowance) - vacation_taken - vacation_pending,
             })
         })
         .collect();

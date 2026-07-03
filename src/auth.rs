@@ -1,7 +1,7 @@
 use argon2::Argon2;
 use argon2::password_hash::rand_core::OsRng;
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
-use axum::extract::FromRequestParts;
+use axum::extract::{FromRequestParts, OptionalFromRequestParts};
 use axum::http::request::Parts;
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use serde::{Deserialize, Serialize};
@@ -107,5 +107,23 @@ where
             Some((role, true)) => Ok(AuthUser { id: user_id, role }),
             _ => Err(ApiError::Unauthorized),
         }
+    }
+}
+
+/// `Option<AuthUser>` extractor: `None` for anonymous/invalid tokens instead
+/// of rejecting. Used by endpoints that behave differently pre-login.
+impl<S> OptionalFromRequestParts<S> for AuthUser
+where
+    S: Send + Sync,
+{
+    type Rejection = ApiError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &S,
+    ) -> Result<Option<Self>, Self::Rejection> {
+        Ok(<AuthUser as FromRequestParts<S>>::from_request_parts(parts, state)
+            .await
+            .ok())
     }
 }

@@ -44,16 +44,32 @@ pub struct Absence {
     pub kind: String,
     pub start_date: NaiveDate,
     pub end_date: NaiveDate,
-    pub business_days: i32,
+    pub business_days: f64,
+    pub status: String,
+    pub day_part: String,
+    pub note: Option<String>,
+    pub decision_reason: Option<String>,
 }
+
+pub const ABSENCE_COLUMNS: &str =
+    "id, user_id, kind, start_date, end_date, business_days, status, day_part, note, decision_reason";
 
 #[derive(Serialize)]
 pub struct Summary {
     pub year: i32,
     pub allowance: i32,
-    pub vacation_taken: i32,
-    pub sick_taken: i32,
-    pub remaining: i32,
+    pub vacation_taken: f64,
+    pub vacation_pending: f64,
+    pub sick_taken: f64,
+    pub remaining: f64,
+}
+
+#[derive(Serialize, FromRow)]
+pub struct CompanyDay {
+    pub id: Uuid,
+    pub name: String,
+    pub start_date: NaiveDate,
+    pub end_date: NaiveDate,
 }
 
 #[derive(Serialize, FromRow)]

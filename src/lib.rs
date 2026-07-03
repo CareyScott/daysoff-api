@@ -57,6 +57,16 @@ pub fn app() -> Router {
             get(routes::absences::list).post(routes::absences::create),
         )
         .route("/api/absences/{id}", delete(routes::absences::remove))
+        .route("/api/absences/{id}/approve", post(routes::absences::approve))
+        .route("/api/absences/{id}/deny", post(routes::absences::deny))
+        .route(
+            "/api/company-days",
+            get(routes::company_days::list).post(routes::company_days::create),
+        )
+        .route(
+            "/api/company-days/{id}",
+            delete(routes::company_days::remove),
+        )
         .route("/api/overview", get(routes::overview::overview))
         .route(
             "/api/users",

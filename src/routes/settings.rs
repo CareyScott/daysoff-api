@@ -8,24 +8,33 @@ use crate::error::ApiError;
 
 const MAX_LOGO_BYTES: usize = 300 * 1024; // data-URL text length cap
 
-/// Public: the login screen needs branding before authentication.
-pub async fn get() -> Result<Json<Value>, ApiError> {
+/// Public: the login screen needs branding before authentication. When
+/// `hide_login_branding` is on, anonymous requests get colors only; the
+/// company name and logo are withheld until after login.
+pub async fn get(user: Option<AuthUser>) -> Result<Json<Value>, ApiError> {
     let pool = db::pool().await?;
-    let (company_name, accent_color, accent_color2, logo_data): (
+    let (company_name, accent_color, accent_color2, logo_data, require_approval, hide_login_branding): (
         String,
         String,
         Option<String>,
         Option<String>,
+        bool,
+        bool,
     ) = sqlx::query_as(
-        "SELECT company_name, accent_color, accent_color2, logo_data FROM settings WHERE id",
+        "SELECT company_name, accent_color, accent_color2, logo_data, require_approval, hide_login_branding
+         FROM settings WHERE id",
     )
     .fetch_one(pool)
     .await?;
+
+    let mask = user.is_none() && hide_login_branding;
     Ok(Json(json!({
-        "company_name": company_name,
+        "company_name": if mask { "".to_string() } else { company_name },
         "accent_color": accent_color,
         "accent_color2": accent_color2,
-        "logo_data": logo_data,
+        "logo_data": if mask { None } else { logo_data },
+        "require_approval": require_approval,
+        "hide_login_branding": hide_login_branding,
     })))
 }
 
@@ -37,6 +46,10 @@ pub struct UpdateBody {
     pub accent_color2: Option<String>,
     #[serde(default)]
     pub logo_data: Option<String>,
+    #[serde(default)]
+    pub require_approval: bool,
+    #[serde(default)]
+    pub hide_login_branding: bool,
 }
 
 fn valid_hex_color(s: &str) -> bool {
@@ -84,6 +97,8 @@ pub async fn update(user: AuthUser, Json(body): Json<UpdateBody>) -> Result<Json
             accent_color = $2,
             accent_color2 = $3,
             logo_data = $4,
+            require_approval = $5,
+            hide_login_branding = $6,
             updated_at = now()
          WHERE id",
     )
@@ -91,6 +106,8 @@ pub async fn update(user: AuthUser, Json(body): Json<UpdateBody>) -> Result<Json
     .bind(&accent)
     .bind(&accent2)
     .bind(&body.logo_data)
+    .bind(body.require_approval)
+    .bind(body.hide_login_branding)
     .execute(pool)
     .await?;
 
@@ -99,5 +116,7 @@ pub async fn update(user: AuthUser, Json(body): Json<UpdateBody>) -> Result<Json
         "accent_color": accent,
         "accent_color2": accent2,
         "logo_data": body.logo_data,
+        "require_approval": body.require_approval,
+        "hide_login_branding": body.hide_login_branding,
     })))
 }
