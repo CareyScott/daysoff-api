@@ -70,6 +70,7 @@ pub struct CompanyDay {
     pub name: String,
     pub start_date: NaiveDate,
     pub end_date: NaiveDate,
+    pub day_part: String,
 }
 
 #[derive(Serialize, FromRow)]

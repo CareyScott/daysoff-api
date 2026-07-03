@@ -23,7 +23,7 @@ pub async fn list(
     let year = q.year.unwrap_or_else(current_year);
     let pool = db::pool().await?;
     let days: Vec<CompanyDay> = sqlx::query_as(
-        "SELECT id, name, start_date, end_date FROM company_days
+        "SELECT id, name, start_date, end_date, day_part FROM company_days
          WHERE date_part('year', start_date) = $1 OR date_part('year', end_date) = $1
          ORDER BY start_date",
     )
@@ -38,6 +38,8 @@ pub struct CreateBody {
     pub name: String,
     pub start_date: NaiveDate,
     pub end_date: NaiveDate,
+    #[serde(default)]
+    pub day_part: Option<String>,
 }
 
 pub async fn create(
@@ -52,16 +54,24 @@ pub async fn create(
     if body.end_date < body.start_date {
         return Err(ApiError::Unprocessable("end date is before start date".to_string()));
     }
+    let day_part = body.day_part.as_deref().unwrap_or("full");
+    if !matches!(day_part, "full" | "am" | "pm") {
+        return Err(ApiError::Unprocessable("day part must be 'full', 'am' or 'pm'".to_string()));
+    }
+    if day_part != "full" && body.start_date != body.end_date {
+        return Err(ApiError::Unprocessable("half days apply to a single date".to_string()));
+    }
 
     let pool = db::pool().await?;
     let day: CompanyDay = sqlx::query_as(
-        "INSERT INTO company_days (name, start_date, end_date)
-         VALUES ($1, $2, $3)
-         RETURNING id, name, start_date, end_date",
+        "INSERT INTO company_days (name, start_date, end_date, day_part)
+         VALUES ($1, $2, $3, $4)
+         RETURNING id, name, start_date, end_date, day_part",
     )
     .bind(name)
     .bind(body.start_date)
     .bind(body.end_date)
+    .bind(day_part)
     .fetch_one(pool)
     .await?;
 
