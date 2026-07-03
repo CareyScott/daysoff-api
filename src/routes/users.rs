@@ -139,6 +139,19 @@ pub async fn update(
     if let Some(role) = &body.role {
         validate_role(role)?;
     }
+    // Lockout guards: an admin cannot demote or deactivate themselves.
+    if id == user.id {
+        if matches!(body.role.as_deref(), Some(role) if role != "admin") {
+            return Err(ApiError::Unprocessable(
+                "you cannot remove your own admin role".to_string(),
+            ));
+        }
+        if body.active == Some(false) {
+            return Err(ApiError::Unprocessable(
+                "you cannot deactivate your own account".to_string(),
+            ));
+        }
+    }
     let password_hash = match &body.password {
         Some(p) => {
             validate_password(p)?;
