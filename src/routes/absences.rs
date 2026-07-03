@@ -7,7 +7,7 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::auth::AuthUser;
-use crate::dates::{business_days, current_year, is_weekend};
+use crate::dates::{current_year, is_weekend};
 use crate::db;
 use crate::error::ApiError;
 use crate::models::{ABSENCE_COLUMNS, Absence};
@@ -84,14 +84,57 @@ pub async fn create(
         }
     }
 
+    // Company days are already off for everyone: they cost nothing and a
+    // booking that covers only company days / weekends is rejected.
+    let pool = db::pool().await?;
+    let company_rows: Vec<(NaiveDate, NaiveDate, String)> = sqlx::query_as(
+        "SELECT start_date, end_date, day_part FROM company_days
+         WHERE daterange(start_date, end_date, '[]') && daterange($1, $2, '[]')",
+    )
+    .bind(body.start_date)
+    .bind(body.end_date)
+    .fetch_all(pool)
+    .await?;
+
+    let mut coverage: std::collections::HashMap<NaiveDate, String> =
+        std::collections::HashMap::new();
+    for (cd_start, cd_end, cd_part) in &company_rows {
+        let mut d = *cd_start;
+        while d <= *cd_end {
+            let entry = coverage.entry(d).or_insert_with(|| cd_part.clone());
+            // Merge overlapping company days: full wins; am + pm = full.
+            if entry != cd_part {
+                *entry = "full".to_string();
+            }
+            d = d.succ_opt().expect("date overflow");
+        }
+    }
+
     let days: f64 = if day_part == "full" {
-        f64::from(business_days(body.start_date, body.end_date))
+        let mut sum = 0.0;
+        let mut d = body.start_date;
+        while d <= body.end_date {
+            if !is_weekend(d) {
+                sum += match coverage.get(&d).map(String::as_str) {
+                    Some("full") => 0.0,
+                    Some(_) => 0.5,
+                    None => 1.0,
+                };
+            }
+            d = d.succ_opt().expect("date overflow");
+        }
+        sum
     } else {
-        0.5
+        match coverage.get(&body.start_date).map(String::as_str) {
+            Some("full") => 0.0,
+            Some(part) if part == day_part => 0.0,
+            Some(_) => 0.5,
+            None => 0.5,
+        }
     };
     if days == 0.0 {
         return Err(ApiError::Unprocessable(
-            "range contains no business days".to_string(),
+            "these days are already off (weekends or company days)".to_string(),
         ));
     }
 
@@ -115,7 +158,6 @@ pub async fn create(
         _ => user.id,
     };
 
-    let pool = db::pool().await?;
     let year = body.start_date.year();
 
     // Overlap check covering half-day combinations (am + pm on the same day is
